@@ -1,0 +1,45 @@
+{
+  "schema": 2,
+  "generated_at": "2026-10-13T13:53:40.120Z",
+  "some_future_field": {"nested": [1, 2, 3]},
+  "slots": {
+    "allocated": 3,
+    "occupied": 4,
+    "workers": [
+      { "host": "w1", "slots": null, "busy": 1, "version": "dev", "online": true, "last_seen": "2026-10-13T13:53:32.820Z" }
+    ]
+  },
+  "agents": [
+    {
+      "project": "vt", "ticket": "VT-12", "title": "", "url": "https://tracker.example/VT-12",
+      "kind": "validate", "attempt": 2, "state": "working", "progress": "running unit specs",
+      "awaiting": "", "started_at": "2026-10-13T13:41:40.120Z", "herdr_agent": "x"
+    },
+    {
+      "project": "rs", "ticket": "RS-3", "title": "Fix login", "url": "https://tracker.example/RS-3",
+      "kind": "code", "attempt": 1, "state": "blocked", "progress": "",
+      "awaiting": "which DB?", "started_at": "2026-10-13T11:50:40Z", "herdr_agent": "y"
+    }
+  ],
+  "needs_you": [
+    { "kind": "handoff", "project": "vt", "ticket": "VT-9", "reason": "6 risks, 3 left", "since": "2026-10-13T06:04:20.878Z", "attach": "" },
+    { "kind": "notes", "project": "vt", "ticket": "", "reason": "2 notes", "since": null, "attach": "" }
+  ],
+  "projects": [
+    { "slug": "vt", "enabled": true, "ready": 1, "running": 0, "validating": 1, "review": 9, "blocked": 0, "leases": 1, "max_parallel": 2 },
+    { "slug": "rs", "enabled": false, "ready": 5, "running": 0, "validating": 0, "review": 0, "blocked": 0, "leases": 0, "max_parallel": 1 },
+    { "slug": "ok", "enabled": true, "ready": 2 }
+  ],
+  "host": {
+    "disk_free_bytes": 43384242176,
+    "disk_total_bytes": 105467994112,
+    "cpu_percent": null,
+    "load1": 1.21,
+    "cores": 2,
+    "mem_used_bytes": 18446744073709551000,
+    "mem_total_bytes": 18446744073709551615,
+    "runs_mem_used_bytes": 519868416,
+    "runs_mem_max_bytes": 5368709120
+  },
+  "warnings": []
+}
