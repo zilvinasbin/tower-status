@@ -15,6 +15,8 @@ final class StatusItemController: NSObject {
     init(store: TowerStore) {
         self.store = store
         super.init()
+        // A fixed name lets macOS remember where the user ⌘-dragged the item.
+        statusItem.autosaveName = "TowerStatusItem"
 
         let hosting = NSHostingController(rootView: PanelView(store: store, ui: ui, launchAtLogin: launchAtLogin))
         hosting.sizingOptions = .preferredContentSize
