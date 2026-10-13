@@ -56,6 +56,11 @@ final class TowerStore {
         }
     }
 
+    /// Refreshes relative times ("12m") without polling.
+    func touch() {
+        now = Date()
+    }
+
     func stop() {
         loop?.cancel()
         loop = nil
@@ -67,6 +72,11 @@ final class TowerStore {
         lastFetch = nil
         now = Date()
         restart()
+    }
+
+    /// One poll outside the loop (used by `--snapshot`).
+    func pollOnce() async {
+        await poll(generation: generation)
     }
 
     private func poll(generation gen: Int) async {
