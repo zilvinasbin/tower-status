@@ -1,26 +1,52 @@
 import AppKit
 import Observation
+import SwiftUI
 import TowerCore
 
-/// Owns the menu bar item and rebuilds its menu from the store's `Presentation`.
+/// Owns the menu bar item and the panel it opens.
 @MainActor
-final class StatusItemController: NSObject, NSMenuDelegate {
+final class StatusItemController: NSObject {
     private let store: TowerStore
-    private let settingsWindow: SettingsWindowController
+    private let ui = PanelState()
+    private let launchAtLogin = LaunchAtLogin()
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-    private let menu = NSMenu()
+    private let popover = NSPopover()
 
-    init(store: TowerStore, settingsWindow: SettingsWindowController) {
+    init(store: TowerStore) {
         self.store = store
-        self.settingsWindow = settingsWindow
         super.init()
-        menu.autoenablesItems = false
-        menu.delegate = self
-        statusItem.menu = menu
+
+        let hosting = NSHostingController(rootView: PanelView(store: store, ui: ui, launchAtLogin: launchAtLogin))
+        hosting.sizingOptions = .preferredContentSize
+        popover.contentViewController = hosting
+        popover.behavior = .transient
+        popover.animates = true
+
+        if let button = statusItem.button {
+            button.imagePosition = .imageLeading
+            button.target = self
+            button.action = #selector(toggle)
+        }
         observeStore()
     }
 
-    /// Re-renders whenever the store changes.
+    @objc private func toggle() {
+        popover.isShown ? popover.performClose(nil) : show()
+    }
+
+    /// Opens the panel; `settings: true` opens it on the settings face.
+    func show(settings: Bool = false) {
+        guard let button = statusItem.button else { return }
+        ui.showingSettings = settings
+        store.touch()
+        launchAtLogin.refresh()
+        // The app is an accessory: activate it so the panel's text field takes typing.
+        NSApp.activate()
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        popover.contentViewController?.view.window?.makeKey()
+    }
+
+    /// Re-renders the button whenever the store changes.
     private func observeStore() {
         withObservationTracking {
             render(store.presentation)
@@ -29,113 +55,35 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         }
     }
 
-    func menuWillOpen(_ menu: NSMenu) {
-        render(store.presentation)  // fresh ages
-    }
-
     private func render(_ p: Presentation) {
-        if let button = statusItem.button {
-            button.attributedTitle = NSAttributedString(string: p.title, attributes: [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular),
-            ])
-            button.appearsDisabled = p.titleDimmed
-            button.toolTip = (["Tower"] + p.messages).joined(separator: " · ")
+        guard let button = statusItem.button else { return }
+        button.image = Self.icon
+        button.attributedTitle = Self.title(p)
+        button.appearsDisabled = p.titleDimmed
+        button.toolTip = (["Tower"] + p.messages).joined(separator: " — ")
+    }
+
+    private static let icon: NSImage? = {
+        let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
+        let image = NSImage(systemSymbolName: "antenna.radiowaves.left.and.right", accessibilityDescription: "Tower")?
+            .withSymbolConfiguration(config)
+        image?.isTemplate = true
+        return image
+    }()
+
+    /// `1/3`, then an amber `⚠6` when items need you; `–` when not live.
+    static func title(_ p: Presentation) -> NSAttributedString {
+        let font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .medium)
+        guard !p.titleDimmed, let data = p.data, let slots = p.title.split(separator: " ").dropFirst().first else {
+            return NSAttributedString(string: " –", attributes: [.font: font])
         }
-        menu.removeAllItems()
-        Self.build(p, into: menu, target: self)
-    }
-
-    static func build(_ p: Presentation, into menu: NSMenu, target: StatusItemController?) {
-        for message in p.messages {
-            menu.addItem(info(message, color: .systemOrange))
+        let title = NSMutableAttributedString(string: " \(slots)", attributes: [.font: font])
+        if data.needsYouCount > 0 {
+            title.append(NSAttributedString(string: "  ⚠\(data.needsYouCount)", attributes: [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .bold),
+                .foregroundColor: NSColor.systemOrange,
+            ]))
         }
-        if !p.messages.isEmpty { menu.addItem(.separator()) }
-
-        if let d = p.data {
-            let dim = p.dataDimmed
-            menu.addItem(line(d.slots, dimmed: dim))
-
-            let needs = line(d.needsYou, dimmed: dim)
-            if !d.needsYouRows.isEmpty {
-                let sub = NSMenu()
-                sub.autoenablesItems = false
-                d.needsYouRows.forEach { sub.addItem(line($0, dimmed: dim)) }
-                needs.submenu = sub
-                needs.isEnabled = true
-            }
-            menu.addItem(needs)
-            menu.addItem(line(d.queue, dimmed: dim))
-            menu.addItem(line(d.host, dimmed: dim))
-
-            menu.addItem(info(d.agents.isEmpty ? "Running agents: none" : "Running agents:", dimmed: dim))
-            for agent in d.agents {
-                let item = line(agent, dimmed: dim, indent: 1)
-                if let url = agent.url, let target {
-                    item.representedObject = url
-                    item.target = target
-                    item.action = #selector(openURL(_:))
-                    item.isEnabled = true
-                    item.toolTip = url.absoluteString
-                }
-                menu.addItem(item)
-            }
-
-            if !d.warnings.isEmpty {
-                menu.addItem(.separator())
-                menu.addItem(NSMenuItem.sectionHeader(title: "Warnings"))
-                d.warnings.forEach { menu.addItem(info($0, color: .systemOrange, dimmed: dim)) }
-            }
-            menu.addItem(.separator())
-        }
-
-        let actions: [(String, Selector, String, Bool)] = [
-            ("Open dashboard", #selector(openDashboard), "d", target?.store.settings.address != nil),
-            ("Refresh now", #selector(refresh), "r", target?.store.settings.address != nil),
-            ("Settings…", #selector(openSettings), ",", true),
-        ]
-        for (title, action, key, enabled) in actions {
-            let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
-            item.target = target
-            item.isEnabled = enabled
-            menu.addItem(item)
-        }
-        menu.addItem(.separator())
-        let quit = NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        menu.addItem(quit)
-    }
-
-    /// A read-only row. Disabled items keep the colour of their attributed title,
-    /// so normal rows read as normal text and dimmed rows as secondary text.
-    private static func info(_ text: String, color: NSColor = .labelColor, dimmed: Bool = false, indent: Int = 0) -> NSMenuItem {
-        let item = NSMenuItem(title: text, action: nil, keyEquivalent: "")
-        item.attributedTitle = NSAttributedString(string: text, attributes: [
-            .foregroundColor: dimmed ? NSColor.tertiaryLabelColor : color,
-            .font: NSFont.menuFont(ofSize: 0),
-        ])
-        item.indentationLevel = indent
-        item.isEnabled = false
-        return item
-    }
-
-    private static func line(_ line: Presentation.Line, dimmed: Bool, indent: Int = 0) -> NSMenuItem {
-        info(line.text, color: line.tone == .warning ? .systemOrange : .labelColor, dimmed: dimmed, indent: indent)
-    }
-
-    // MARK: - Actions
-
-    @objc private func openURL(_ sender: NSMenuItem) {
-        if let url = sender.representedObject as? URL { NSWorkspace.shared.open(url) }
-    }
-
-    @objc private func openDashboard() {
-        if let url = store.settings.address?.dashboardURL { NSWorkspace.shared.open(url) }
-    }
-
-    @objc private func refresh() {
-        store.restart()
-    }
-
-    @objc private func openSettings() {
-        settingsWindow.show()
+        return title
     }
 }

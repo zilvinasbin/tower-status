@@ -1,18 +1,26 @@
 import AppKit
+import SwiftUI
 import TowerCore
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let store = TowerStore(settings: Settings())
     private var controller: StatusItemController?
-    private var settingsWindow: SettingsWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let settingsWindow = SettingsWindowController(store: store)
-        self.settingsWindow = settingsWindow
-        controller = StatusItemController(store: store, settingsWindow: settingsWindow)
+        let controller = StatusItemController(store: store)
+        self.controller = controller
         store.start()
-        if store.settings.address == nil { settingsWindow.show() }
+        if store.settings.address == nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { controller.show(settings: true) }
+        }
+    }
+
+    /// Opening the app again (Spotlight, Finder) opens the panel, so it stays
+    /// reachable when a menu bar manager hides the status item.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        controller?.show()
+        return false
     }
 }
 
@@ -57,8 +65,40 @@ extension FetchOutcome {
     }
 }
 
+/// `TowerBar --snapshot out.png <address> [settings]` polls once and renders the
+/// panel to a PNG, for checking the design without clicking.
+@MainActor
+func snapshot(to path: String, address raw: String, settings: Bool) async -> Int32 {
+    let defaults = UserDefaults(suiteName: "towerbar.snapshot")!
+    defaults.set(raw, forKey: "towerAddress")
+    let store = TowerStore(settings: Settings(defaults: defaults))
+    await store.pollOnce()
+    let ui = PanelState()
+    ui.showingSettings = settings
+    let view = PanelView(store: store, ui: ui, launchAtLogin: LaunchAtLogin())
+        .background(Color(nsColor: .windowBackgroundColor))
+        .environment(\.colorScheme, ProcessInfo.processInfo.environment["DARK"] == nil ? .light : .dark)
+    let renderer = ImageRenderer(content: view)
+    renderer.scale = 2
+    guard let image = renderer.nsImage, let tiff = image.tiffRepresentation,
+          let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else {
+        print("render failed")
+        return 1
+    }
+    try? png.write(to: URL(fileURLWithPath: path))
+    print("wrote", path)
+    return 0
+}
+
 let args = CommandLine.arguments
-if let i = args.firstIndex(of: "--print"), i + 1 < args.count {
+if let i = args.firstIndex(of: "--snapshot"), i + 2 < args.count {
+    let path = args[i + 1], raw = args[i + 2]
+    let settings = args.contains("settings")
+    Task { @MainActor in
+        exit(await snapshot(to: path, address: raw, settings: settings))
+    }
+    RunLoop.main.run()
+} else if let i = args.firstIndex(of: "--print"), i + 1 < args.count {
     let raw = args[i + 1]
     Task {
         exit(await printOnce(raw))
